@@ -1,0 +1,12 @@
+﻿CUSIP,NMV,in_scope
+ABC,100,1
+DEF,200,1
+GHI,300,1
+GH123,300,1
+IU234ABC,200,1
+JGB1234ABC,300,1
+jjj,1000,
+kkk,1000,
+Model,1000,1
+reduce_coverage,1000,1
+new_coverage,100,1
