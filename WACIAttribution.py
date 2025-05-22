@@ -18,17 +18,24 @@ class WACIAttribtion:
     attribution = None
 
     def __init__(self, config_definition):
+        #Disable chain assignment warning
         pd.options.mode.chained_assignment = None
+
+        #Initialize class parameters
         self.config_def = config_definition
         self.carbon_intensity_name = self.config_def['carbon_intensity']
         self.pf_identifier = self.config_def['pf_identifier']
         self.esg_identifier = self.config_def['esg_identifier']
         self.nmv_name = self.config_def['nmv_name']
+
+        #Read portfolio and ESG data as time t
         self.portfolio_t1_df = pd.read_csv(self.config_def['pf_t1'])
         self.esg_data_t1_df = pd.read_csv(self.config_def['esg_t1'])
+        #Merge portfolio and esg data on identifier
         self.pf_esg_t1_df = pd.merge(self.portfolio_t1_df, self.esg_data_t1_df, left_on=self.pf_identifier,
                                      right_on=self.esg_identifier,
                                      how='left')
+        # Read portfolio and ESG data as time t+1
         if 'pf_t2' in config_definition.keys():
             self.portfolio_t2_df = pd.read_csv(self.config_def['pf_t2'])
         else:
@@ -40,7 +47,7 @@ class WACIAttribtion:
         else:
             self.esg_data_t2_df = None
             return
-
+        # Merge portfolio and esg data on identifier
         self.pf_esg_t2_df = pd.merge(self.portfolio_t2_df, self.esg_data_t2_df, left_on=self.pf_identifier,
                                      right_on=self.esg_identifier,
                                      how='left')
@@ -55,7 +62,7 @@ class WACIAttribtion:
 
             Args:
                 in_scope_col (string):  The column header of the columns that indicate in-scope assets. A value of 1
-                                        indicates in-scope.
+                                        indicates asset is sin-scope.
 
             Returns:
                 string,string: WACI at t and at t-1
@@ -63,8 +70,12 @@ class WACIAttribtion:
             Raises:
                 None
             """
+
+        #Determine in scope asset using in_scope_col value
         pf_t1 = self.pf_esg_t1_df[self.pf_esg_t1_df[in_scope_col] == 1]
         pf_t2 = self.pf_esg_t2_df[self.pf_esg_t1_df[in_scope_col] == 1]
+
+        #Calculates WACI at t and at t+1 if the data is loaded during initialization
         self.waci_t1 = (pf_t1[self.nmv_name] * pf_t1[self.carbon_intensity_name]
                         /pf_t1.dropna(subset=[self.carbon_intensity_name])[
                             self.nmv_name].sum()).sum()
@@ -82,6 +93,8 @@ class WACIAttribtion:
             time t and time t-1. It uses the in_scope_col parameter and filter out securities that are in-scope before
             calculating. It is following the NZAOA calculation methodology and spits out attribution to:
             Coverage, New Investments, Divestments, Weights, Emissions, Revenue and Model.
+            Model attribution happens when Carbon Intensity <> Carbon Emissions/Sales. This is when data provider
+            models the intensity rather than using this standard formula.
 
             Args:
                 in_scope_col (string):  The column header of the columns that indicate in-scope assets. A value of 1
@@ -94,41 +107,44 @@ class WACIAttribtion:
                 None
             """
         attribution_dic = {}
+
+        #Calculates portfolio weights of in-scope assets at t
         pf_t1 = self.pf_esg_t1_df[self.pf_esg_t1_df[in_scope_col] == 1]
+        pf_t2 = self.pf_esg_t2_df[self.pf_esg_t1_df[in_scope_col] == 1]
         pf_t1['weight'] = pf_t1[self.nmv_name] / pf_t1.dropna(subset=[self.carbon_intensity_name])[self.nmv_name].sum()
 
-        pf_in_scope_nmv_t1 = pf_t1[self.nmv_name].sum()
-        pf_t2 = self.pf_esg_t2_df[self.pf_esg_t1_df[in_scope_col] == 1]
+        #Calculates portfolio weights of in-scope assets at t+1
         pf_t2['weight'] = pf_t2[self.nmv_name] / pf_t2.dropna(subset=[self.carbon_intensity_name])[self.nmv_name].sum()
-        pf_in_scope_nmv_t2 = pf_t2[self.nmv_name].sum()
 
+        #Calculates attributiononly when there is value WACI at t and t+1
         if self.waci_t1 != None and self.waci_t2 != None:
-            # coverage
-            pf_t1_no_esg_data_df = pf_t1[pf_t1[self.carbon_intensity_name].isna()]
-            pf_t2_has_esg_data_df = pf_t2.dropna(subset=[self.carbon_intensity_name])
-            new_coverage = pf_t2_has_esg_data_df[
-                pf_t2_has_esg_data_df[self.pf_identifier].isin(pf_t1_no_esg_data_df[self.pf_identifier])]
+            # Calculate coverage attribution
+            #pf_t1_no_esg_data_df = pf_t1[pf_t1[self.carbon_intensity_name].isna()]
+            #pf_t2_has_esg_data_df = pf_t2.dropna(subset=[self.carbon_intensity_name])
+            #new_coverage = pf_t2_has_esg_data_df[
+            #    pf_t2_has_esg_data_df[self.pf_identifier].isin(pf_t1_no_esg_data_df[self.pf_identifier])]
 
             pf_t1_t2_df = pd.merge(pf_t1, pf_t2, on=self.pf_identifier, how='outer')
 
-            # new Investment
+            #Calculates attribution due to new Investment
             new_investment_df = pf_t1_t2_df[pf_t1_t2_df[self.nmv_name + "_x"].isna()]
             new_investment_df['waci_attri'] = new_investment_df['weight_y'] * (
                     new_investment_df[self.carbon_intensity_name + "_y"] - self.waci_t1)
             attri_new = new_investment_df['waci_attri'].sum()
-            # divestment
+            #Calculates attribution due to divestment
             divestment_df = pf_t1_t2_df[pf_t1_t2_df[self.nmv_name + "_y"].isna()]
             divestment_df['waci_attri'] = divestment_df['weight_x'] * (
                     divestment_df[self.carbon_intensity_name + "_x"] - self.waci_t1)
             attri_div = divestment_df['waci_attri'].sum()
 
-            # intersect
+            #Calculates attribution for held security - Weight, Emissions, Sales, Model
             intersect_df = pf_t1_t2_df.dropna(subset=[self.nmv_name + "_x", self.nmv_name + "_y"])
-            # intersect - extract security without standard intensity calculation
+
+            #intersect - extract security without standard intensity calculation
+            #check that it is a custom model at t1 and has a valid data at t2. It is a standard WACI
+            #if it use Carbon Emissions/Sales, otherwise it is non-standard.
             intersect_df['inten_check'] = intersect_df[self.config_def['carbon_emission'] + "_x"] / intersect_df[
                 self.config_def['sales'] + "_x"]
-
-            # check that it is a custom model at t1 and has a valid data at t2
             custom_model_df = intersect_df[
                 (intersect_df['inten_check'] != intersect_df[self.carbon_intensity_name + "_x"]) &
                 (intersect_df[self.carbon_intensity_name + "_y"] > 0)]
@@ -139,7 +155,7 @@ class WACIAttribtion:
                 self.carbon_intensity_name + "_x"])
             attri_custom = custom_model_df['waci_attri'].sum()
 
-            # coverage
+            #Calculates attribution due to coverage
             new_coverage_df = intersect_df[
                 (intersect_df[self.nmv_name + "_x"] > 0) & (intersect_df[self.carbon_intensity_name + "_x"].isna())]
             new_coverage_df['waci_attri'] = new_coverage_df['weight_y'] * (
@@ -152,7 +168,7 @@ class WACIAttribtion:
                     reduce_coverage_df[self.carbon_intensity_name + "_x"] - self.waci_t1)
             attri_reduce_coverage = reduce_coverage_df['waci_attri'].sum()
 
-            # intersect - security with standard intensity calculation and excluding data coverage
+            #Calculates weights, revenue, emissions attributions
             intersect_df = intersect_df[~intersect_df[self.pf_identifier].isin(new_coverage_df[self.pf_identifier])]
             intersect_df = intersect_df[~intersect_df[self.pf_identifier].isin(reduce_coverage_df[self.pf_identifier])]
             intersect_df['weight_attri'] = (intersect_df[self.carbon_intensity_name + "_x"] - self.waci_t1) * \
@@ -171,6 +187,7 @@ class WACIAttribtion:
             attri_carbon = intersect_df['carbon_attri'].sum()
             attri_weight = intersect_df['weight_attri'].sum()
 
+            #Assign attribution to return dictionary
             attribution_dic['Weight'] = attri_weight
             attribution_dic['Coverage'] = attri_new_coverage - attri_reduce_coverage
             attribution_dic['Model'] = attri_custom
@@ -178,6 +195,8 @@ class WACIAttribtion:
             attribution_dic['Divestment'] = -attri_div
             attribution_dic['Emissions'] = attri_carbon
             attribution_dic['Revenue'] = attri_rev
+
+            #check for error, sum of all attribution and old WACI should result in new WACI value
             error = self.waci_t1 + attri_weight + attri_new_coverage - attri_reduce_coverage + attri_custom \
                     + attri_new - attri_div + attri_carbon + attri_rev - self.waci_t2
             print(error)
@@ -186,23 +205,40 @@ class WACIAttribtion:
 
     def plot_attribution(self,
                          order=['Coverage', 'Model', 'Investment', 'Divestment', 'Weight', 'Emissions', 'Revenue']):
-        # create dataframe
+        """
+            Plot the WACI attribution as a cumulative chart
+
+            Args:
+                order (list): The order which the attributions will appear in the chart from left to right
+            Returns:
+                chart (Altair chart): WACI attributions cumulative chart
+
+            Raises:
+                None
+        """
+
+        # create dataframe for use in chart
         chart_df = pd.DataFrame([self.attribution])[order].T.reset_index()
         chart_df.columns = ['Attribution', 'Value']
+
+        #calculates the range of the bar chart
         chart_df['High'] = chart_df.cumsum()['Value'] + self.waci_t1
         chart_df['Low'] = chart_df['High'] - chart_df['Value']
+
+        #generate the direction value on whether it is a increase or decrease from previous bar
         chart_df['Direction'] = ['Decrease' if row['Low'] > row['High'] else 'Increase' for idx, row in
                                  chart_df[['High', 'Low']].iterrows()]
         min_waci = chart_df[['High', 'Low']].min().min()
         max_waci = chart_df[['High', 'Low']].max().max()
 
+        #add in the WACI values before and after attribution and assign custom direction values
         chart_df = pd.concat(
             [pd.DataFrame([['Old WACI', self.waci_t1, min_waci * 0.8, self.waci_t1, 'Old WACI']],
                           columns=['Attribution', 'High', 'Low', 'Value', 'Direction']), chart_df,
              pd.DataFrame([['New WACI', self.waci_t2, min_waci * 0.8, self.waci_t2, 'New WACI']],
                           columns=['Attribution', 'High', 'Low', 'Value', 'Direction'])
              ])
-
+        #Generate the bar chart with custom colors
         chart = alt.Chart(chart_df).mark_bar().encode(
             x=alt.X('Attribution:O', title='Attribution Factors',
                     sort=['Old WACI'] + order + ['New WACI']),
